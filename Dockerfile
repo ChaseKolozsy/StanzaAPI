@@ -1,21 +1,21 @@
-# Stage 1: Build dependencies
-FROM python:3.10-alpine as builder
-
-WORKDIR /app
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt && \
-    rm requirements.txt
-
-# Stage 2: Final lightweight image
 FROM python:3.10-slim
 
+# Set the working directory
 WORKDIR /app
 
-COPY --from=builder /app /app
+# Copy the requirements file into the container
+COPY requirements.txt requirements.txt
 
-COPY app.py .
 
+# Install the dependencies
+RUN pip install --upgrade pip
+RUN pip install -r requirements.txt
+
+# Copy the rest of the application code into the container
+COPY . .
+
+# Expose the port the app runs on
 EXPOSE 5004
 
+# Run the application
 CMD ["python", "app.py"]
