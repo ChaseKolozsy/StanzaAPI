@@ -25,7 +25,7 @@ To run StanzaAPI using Docker, follow these steps:
    ```
 3. Run the Docker container:
    ```bash
-   docker run -p 5004:5004 stanzaapi
+   docker run -p 5004:5004 stanza-service
    ```
 
 ## Usage

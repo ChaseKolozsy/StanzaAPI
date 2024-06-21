@@ -16,4 +16,6 @@ COPY --from=builder /app /app
 
 COPY app.py .
 
-CMD ["gunicorn", "--bind", "0.0.0.0:5004", "app:app"]
+EXPOSE 5004
+
+CMD ["python", "app.py"]
