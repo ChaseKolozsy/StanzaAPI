@@ -36,11 +36,11 @@ def process_text():
             "text": sent.text,
             "tokens": [
                 {
-                    "text": token.text,
-                    "lemma": token.lemma,
-                    "pos": token.pos,
-                    "deprel": token.deprel
-                } for token in sent.tokens
+                    "text": word.text,
+                    "lemma": word.lemma,
+                    "pos": word.pos,
+                    "deprel": word.deprel
+                } for word in sent.words
             ]
         }
         result.append(sentence)
