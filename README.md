@@ -18,9 +18,10 @@ To install and run StanzaAPI locally, follow these steps:
 ### Docker Installation
 To run StanzaAPI using Docker, follow these steps:
 1. Clone this repository to your local machine.
-2. Build the Docker container using the provided Dockerfile:
+2. Build the Docker container using the provided Dockerfile, replace X wwith the amount of ram you want it to run with
    ```bash
-   docker build -t stanzaapi .
+      docker build --target builder -t stanza-builder -f Dockerfile .
+      docker build --build-arg STANZA_MEMORY=Xg -t stanza-service -f Dockerfile .
    ```
 3. Run the Docker container:
    ```bash
