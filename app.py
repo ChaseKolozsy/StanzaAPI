@@ -74,8 +74,8 @@ def process_with_stanza(pipeline: stanza.Pipeline, text: str) -> List[Sentence]:
 @app.on_event("startup")
 async def startup_event():
     # Pre-load common language models
-    common_languages = ['en', 'es', 'fr', 'de', 'it']
-    await stanza_pool.warm_up(common_languages)
+    default_languages = ['en', 'hu', 'jp']
+    await stanza_pool.warm_up(default_languages)
 
 @app.post("/process", response_model=List[Sentence])
 async def process_text(request: TextRequest):
