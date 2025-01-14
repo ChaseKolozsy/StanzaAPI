@@ -5,6 +5,7 @@ import stanza
 from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 import asyncio
+import time
 
 # Calculate optimal thread count for M3 Max
 CPU_CORES = multiprocessing.cpu_count()
@@ -35,11 +36,37 @@ class StanzaPool:
         self.locks: List[asyncio.Lock] = []
         self.batch_size = 4096
         self.current_pipeline = 0
+        # Add memory tracking
+        self.processed_count = 0
+        self.last_cleanup = time.time()
+        self.processing_times = []
+        self.max_times_stored = 1000
 
-    def get_pipeline(self):
-        """Get the next available pipeline in a round-robin fashion"""
+    async def cleanup_pipeline(self, index: int):
+        """Recreate a pipeline instance to free memory"""
+        language = self.pipelines[index].lang
+        self.pipelines[index] = stanza.Pipeline(
+            lang=language,
+            processors='tokenize,pos,lemma,depparse',
+            use_gpu=False,
+            batch_size=self.batch_size,
+            preload_processors=True
+        )
+
+    async def get_pipeline(self):
+        """Get the next available pipeline with periodic cleanup"""
         pipeline = self.pipelines[self.current_pipeline]
         lock = self.locks[self.current_pipeline]
+        
+        # Increment processed count
+        self.processed_count += 1
+        
+        # Perform cleanup every 1000 requests or 5 minutes
+        current_time = time.time()
+        if (self.processed_count % 1000 == 0) or (current_time - self.last_cleanup > 300):
+            await self.cleanup_pipeline(self.current_pipeline)
+            self.last_cleanup = current_time
+            
         self.current_pipeline = (self.current_pipeline + 1) % self.num_pipelines
         return pipeline, lock
 
@@ -55,6 +82,16 @@ class StanzaPool:
             ) for _ in range(self.num_pipelines)
         ]
         self.locks = [asyncio.Lock() for _ in range(self.num_pipelines)]
+
+    async def log_processing_time(self, duration: float):
+        self.processing_times.append(duration)
+        if len(self.processing_times) > self.max_times_stored:
+            self.processing_times.pop(0)
+        
+        # Calculate and log average processing time
+        avg_time = sum(self.processing_times) / len(self.processing_times)
+        if len(self.processing_times) % 100 == 0:
+            print(f"Average processing time over last {len(self.processing_times)} requests: {avg_time:.3f}s")
 
 stanza_pool = StanzaPool()
 
@@ -83,11 +120,12 @@ async def startup_event():
 
 @app.post("/process", response_model=List[Sentence])
 async def process_text(request: TextRequest):
+    start_time = time.time()
     try:
         if not stanza_pool.pipelines:
             raise HTTPException(status_code=400, detail="Language model not initialized")
             
-        pipeline, lock = stanza_pool.get_pipeline()
+        pipeline, lock = await stanza_pool.get_pipeline()
         
         async with lock:
             result = await asyncio.get_event_loop().run_in_executor(
@@ -98,8 +136,9 @@ async def process_text(request: TextRequest):
             )
         
         return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        duration = time.time() - start_time
+        await stanza_pool.log_processing_time(duration)
 
 if __name__ == "__main__":
     import uvicorn
