@@ -5,11 +5,10 @@ import stanza
 from concurrent.futures import ThreadPoolExecutor
 import multiprocessing
 import asyncio
-import time
 
 # Calculate optimal thread count for M3 Max
 CPU_CORES = multiprocessing.cpu_count()
-WORKER_COUNT = max(CPU_CORES - 4, 1)
+WORKER_COUNT = max(int((CPU_CORES - 4) / 2), 1)
 
 app = FastAPI(title="Stanza API", version="1.0.0")
 thread_pool = ThreadPoolExecutor(max_workers=WORKER_COUNT)
@@ -36,37 +35,11 @@ class StanzaPool:
         self.locks: List[asyncio.Lock] = []
         self.batch_size = 4096
         self.current_pipeline = 0
-        # Add memory tracking
-        self.processed_count = 0
-        self.last_cleanup = time.time()
-        self.processing_times = []
-        self.max_times_stored = 1000
 
-    async def cleanup_pipeline(self, index: int):
-        """Recreate a pipeline instance to free memory"""
-        language = self.pipelines[index].lang
-        self.pipelines[index] = stanza.Pipeline(
-            lang=language,
-            processors='tokenize,pos,lemma,depparse',
-            use_gpu=False,
-            batch_size=self.batch_size,
-            preload_processors=True
-        )
-
-    async def get_pipeline(self):
-        """Get the next available pipeline with periodic cleanup"""
+    def get_pipeline(self):
+        """Get the next available pipeline in a round-robin fashion"""
         pipeline = self.pipelines[self.current_pipeline]
         lock = self.locks[self.current_pipeline]
-        
-        # Increment processed count
-        self.processed_count += 1
-        
-        # Perform cleanup every 1000 requests or 5 minutes
-        current_time = time.time()
-        if (self.processed_count % 1000 == 0) or (current_time - self.last_cleanup > 300):
-            await self.cleanup_pipeline(self.current_pipeline)
-            self.last_cleanup = current_time
-            
         self.current_pipeline = (self.current_pipeline + 1) % self.num_pipelines
         return pipeline, lock
 
@@ -82,16 +55,6 @@ class StanzaPool:
             ) for _ in range(self.num_pipelines)
         ]
         self.locks = [asyncio.Lock() for _ in range(self.num_pipelines)]
-
-    async def log_processing_time(self, duration: float):
-        self.processing_times.append(duration)
-        if len(self.processing_times) > self.max_times_stored:
-            self.processing_times.pop(0)
-        
-        # Calculate and log average processing time
-        avg_time = sum(self.processing_times) / len(self.processing_times)
-        if len(self.processing_times) % 100 == 0:
-            print(f"Average processing time over last {len(self.processing_times)} requests: {avg_time:.3f}s")
 
 stanza_pool = StanzaPool()
 
@@ -120,12 +83,12 @@ async def startup_event():
 
 @app.post("/process", response_model=List[Sentence])
 async def process_text(request: TextRequest):
-    start_time = time.time()
     try:
         if not stanza_pool.pipelines:
             raise HTTPException(status_code=400, detail="Language model not initialized")
-            
-        pipeline, lock = await stanza_pool.get_pipeline()
+        
+        # Get next available pipeline and lock using the pool's method
+        pipeline, lock = stanza_pool.get_pipeline()
         
         async with lock:
             result = await asyncio.get_event_loop().run_in_executor(
@@ -136,9 +99,51 @@ async def process_text(request: TextRequest):
             )
         
         return result
-    finally:
-        duration = time.time() - start_time
-        await stanza_pool.log_processing_time(duration)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Add new model for batch requests
+class BatchTextRequest(BaseModel):
+    language: str
+    texts: List[str]
+
+# Add new batch processing endpoint
+@app.post("/batch_process", response_model=List[List[Sentence]])
+async def batch_process_texts(request: BatchTextRequest):
+    try:
+        if not stanza_pool.pipelines:
+            raise HTTPException(status_code=400, detail="Language model not initialized")
+        
+        # Split texts into chunks based on number of pipelines
+        num_pipelines = len(stanza_pool.pipelines)
+        chunk_size = (len(request.texts) + num_pipelines - 1) // num_pipelines
+        text_chunks = [request.texts[i:i + chunk_size] 
+                      for i in range(0, len(request.texts), chunk_size)]
+        
+        async def process_chunk(chunk, pipeline_idx):
+            pipeline = stanza_pool.pipelines[pipeline_idx]
+            lock = stanza_pool.locks[pipeline_idx]
+            async with lock:
+                return await asyncio.get_event_loop().run_in_executor(
+                    thread_pool,
+                    lambda: [process_with_stanza(pipeline, text) for text in chunk]
+                )
+        
+        # Process chunks concurrently using different pipelines
+        tasks = [
+            process_chunk(chunk, idx) 
+            for idx, chunk in enumerate(text_chunks)
+        ]
+        chunk_results = await asyncio.gather(*tasks)
+        
+        # Flatten results back into a single list
+        results = []
+        for chunk in chunk_results:
+            results.extend(chunk)
+            
+        return results
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
