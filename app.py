@@ -29,27 +29,32 @@ class Sentence(BaseModel):
     tokens: List[Token]
 
 class StanzaPool:
-    def __init__(self):
-        self.pipelines: Dict[str, stanza.Pipeline] = {}
-        self.locks: Dict[str, asyncio.Lock] = {}
+    def __init__(self, num_pipelines: int = WORKER_COUNT):
+        self.num_pipelines = num_pipelines
+        self.pipelines: List[stanza.Pipeline] = []
+        self.locks: List[asyncio.Lock] = []
         self.batch_size = 4096
+        self.current_pipeline = 0
 
-    def get_pipeline(self, language: str):
-        if language not in self.pipelines:
-            self.pipelines[language] = stanza.Pipeline(
+    def get_pipeline(self):
+        """Get the next available pipeline in a round-robin fashion"""
+        pipeline = self.pipelines[self.current_pipeline]
+        lock = self.locks[self.current_pipeline]
+        self.current_pipeline = (self.current_pipeline + 1) % self.num_pipelines
+        return pipeline, lock
+
+    async def initialize(self, language: str):
+        """Initialize multiple pipelines for the specified language"""
+        self.pipelines = [
+            stanza.Pipeline(
                 lang=language,
                 processors='tokenize,pos,lemma,depparse',
                 use_gpu=False,
                 batch_size=self.batch_size,
                 preload_processors=True
-            )
-            self.locks[language] = asyncio.Lock()
-        return self.pipelines[language], self.locks[language]
-
-    async def warm_up(self, languages: List[str]):
-        """Pre-load specified language models"""
-        for lang in languages:
-            self.get_pipeline(lang)
+            ) for _ in range(self.num_pipelines)
+        ]
+        self.locks = [asyncio.Lock() for _ in range(self.num_pipelines)]
 
 stanza_pool = StanzaPool()
 
@@ -73,14 +78,16 @@ def process_with_stanza(pipeline: stanza.Pipeline, text: str) -> List[Sentence]:
 
 @app.on_event("startup")
 async def startup_event():
-    # Pre-load common language models
-    default_languages = ['en', 'hu', 'ja']
-    await stanza_pool.warm_up(default_languages)
+    # Initialize multiple pipelines for English only
+    await stanza_pool.initialize('hu')  # or whatever language you want
 
 @app.post("/process", response_model=List[Sentence])
 async def process_text(request: TextRequest):
     try:
-        pipeline, lock = stanza_pool.get_pipeline(request.language)
+        if not stanza_pool.pipelines:
+            raise HTTPException(status_code=400, detail="Language model not initialized")
+            
+        pipeline, lock = stanza_pool.get_pipeline()
         
         async with lock:
             result = await asyncio.get_event_loop().run_in_executor(
