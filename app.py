@@ -1,51 +1,105 @@
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from typing import List, Dict, Optional
 import stanza
+from concurrent.futures import ThreadPoolExecutor
+import multiprocessing
+import asyncio
 
-app = Flask(__name__)
+# Calculate optimal thread count for M3 Max
+CPU_CORES = multiprocessing.cpu_count()
+WORKER_COUNT = max(CPU_CORES - 4, 1)
 
-nlp = None
-current_language = None
+app = FastAPI(title="Stanza API", version="1.0.0")
+thread_pool = ThreadPoolExecutor(max_workers=WORKER_COUNT)
 
-@app.route('/select_language', methods=['POST'])
-def select_language():
-    global nlp, current_language
-    language = request.json.get('language')
-    if not language:
-        return jsonify({"error": "Language not provided"}), 400
-    
-    try:
-        nlp = stanza.Pipeline(lang=language, processors='tokenize,pos,lemma,depparse')
-        current_language = language
-        return jsonify({"message": f"Language set to {language}"}), 200
-    except Exception as e:
-        return jsonify({"error": str(e)}), 400
+# Define data models
+class TextRequest(BaseModel):
+    language: str
+    text: str
 
-@app.route('/process', methods=['POST'])
-def process_text():
-    if not nlp:
-        return jsonify({"error": "Language not selected"}), 400
-    
-    text = request.json.get('text')
-    if not text:
-        return jsonify({"error": "Text not provided"}), 400
-    
-    doc = nlp(text)
+class Token(BaseModel):
+    text: str
+    lemma: str
+    pos: str
+    deprel: str
+
+class Sentence(BaseModel):
+    text: str
+    tokens: List[Token]
+
+class StanzaPool:
+    def __init__(self):
+        self.pipelines: Dict[str, stanza.Pipeline] = {}
+        self.locks: Dict[str, asyncio.Lock] = {}
+        self.batch_size = 4096
+
+    def get_pipeline(self, language: str):
+        if language not in self.pipelines:
+            self.pipelines[language] = stanza.Pipeline(
+                lang=language,
+                processors='tokenize,pos,lemma,depparse',
+                use_gpu=False,
+                batch_size=self.batch_size,
+                preload_processors=True
+            )
+            self.locks[language] = asyncio.Lock()
+        return self.pipelines[language], self.locks[language]
+
+    async def warm_up(self, languages: List[str]):
+        """Pre-load specified language models"""
+        for lang in languages:
+            self.get_pipeline(lang)
+
+stanza_pool = StanzaPool()
+
+def process_with_stanza(pipeline: stanza.Pipeline, text: str) -> List[Sentence]:
+    doc = pipeline(text)
     result = []
     for sent in doc.sentences:
-        sentence = {
-            "text": sent.text,
-            "tokens": [
-                {
-                    "text": word.text,
-                    "lemma": word.lemma,
-                    "pos": word.pos,
-                    "deprel": word.deprel
-                } for word in sent.words
+        sentence = Sentence(
+            text=sent.text,
+            tokens=[
+                Token(
+                    text=word.text,
+                    lemma=word.lemma,
+                    pos=word.pos,
+                    deprel=word.deprel
+                ) for word in sent.words
             ]
-        }
+        )
         result.append(sentence)
-    
-    return jsonify(result), 200
+    return result
 
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5004, debug=True)
+@app.on_event("startup")
+async def startup_event():
+    # Pre-load common language models
+    common_languages = ['en', 'es', 'fr', 'de', 'it']
+    await stanza_pool.warm_up(common_languages)
+
+@app.post("/process", response_model=List[Sentence])
+async def process_text(request: TextRequest):
+    try:
+        pipeline, lock = stanza_pool.get_pipeline(request.language)
+        
+        async with lock:
+            result = await asyncio.get_event_loop().run_in_executor(
+                thread_pool,
+                process_with_stanza,
+                pipeline,
+                request.text
+            )
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(
+        "app:app",
+        host="0.0.0.0",
+        port=5004,
+        workers=1,  # Using thread pool instead of multiple workers
+        loop="auto"
+    )

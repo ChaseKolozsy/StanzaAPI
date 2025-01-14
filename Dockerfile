@@ -1,21 +1,30 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    STANZA_RESOURCES_DIR=/app/stanza_resources
 
 # Set the working directory
 WORKDIR /app
 
-# Copy the requirements file into the container
-COPY requirements.txt requirements.txt
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
+# Copy requirements first to leverage Docker cache
+COPY requirements.txt .
 
-# Install the dependencies
-RUN pip install --upgrade pip
-RUN pip install -r requirements.txt
+# Install Python dependencies
+RUN pip install --no-cache-dir --upgrade pip && \
+    pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application code into the container
+# Copy the application code
 COPY . .
 
-# Expose the port the app runs on
+# Expose the port
 EXPOSE 5004
 
-# Run the application
-CMD ["python", "app.py"]
+# Run the application with Uvicorn
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "5004", "--loop", "auto"]
