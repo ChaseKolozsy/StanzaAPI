@@ -8,7 +8,7 @@ import asyncio
 
 # Calculate optimal thread count for M3 Max
 CPU_CORES = multiprocessing.cpu_count()
-WORKER_COUNT = max(int((CPU_CORES - 4) / 2), 1)
+WORKER_COUNT = max(int((CPU_CORES - 2) / 2), 1)
 
 app = FastAPI(title="Stanza API", version="1.0.0")
 thread_pool = ThreadPoolExecutor(max_workers=WORKER_COUNT)
