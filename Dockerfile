@@ -1,10 +1,18 @@
-# Use NVIDIA CUDA base image if GPU is available, otherwise use standard python
-ARG USE_GPU=0
-FROM nvidia/cuda:12.3.1-runtime-ubuntu22.04 AS gpu
-FROM python:3.12-slim AS cpu
+# Modify the base image selection
+ARG USE_GPU=1
+FROM python:3.12-slim
 
-# Select final image based on USE_GPU arg
-FROM ${USE_GPU:+gpu}${USE_GPU:-cpu}
+# Install CUDA dependencies only if USE_GPU=1
+RUN if [ "$USE_GPU" = "1" ] ; then \
+    apt-get update && apt-get install -y --no-install-recommends \
+    cuda-runtime-12-3 \
+    && rm -rf /var/lib/apt/lists/* ; \
+    fi
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -13,11 +21,6 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Set the working directory
 WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
