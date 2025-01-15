@@ -2,8 +2,40 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import stanza
+import hashlib
+import time
+from collections import OrderedDict
 
 app = FastAPI(title="Stanza API", version="1.0.0")
+
+# LRU Cache for results
+class LRUCache:
+    def __init__(self, capacity: int = 1000):
+        self.cache = OrderedDict()
+        self.capacity = capacity
+
+    def get(self, key: str) -> Optional[List]:
+        if key in self.cache:
+            # Move to end to show recently used
+            self.cache.move_to_end(key)
+            return self.cache[key]
+        return None
+
+    def put(self, key: str, value: List) -> None:
+        if key in self.cache:
+            self.cache.move_to_end(key)
+        else:
+            if len(self.cache) >= self.capacity:
+                self.cache.popitem(last=False)
+        self.cache[key] = value
+
+# Initialize cache
+results_cache = LRUCache()
+
+def generate_cache_key(texts: List[str]) -> str:
+    """Generate a unique key for the batch of texts"""
+    combined = "".join(texts)
+    return hashlib.md5(combined.encode()).hexdigest()
 
 # Define data models
 class TextRequest(BaseModel):
@@ -99,9 +131,27 @@ async def batch_process_texts(request: BatchTextRequest):
         if not stanza_pool.pipeline:
             raise HTTPException(status_code=400, detail="Language model not initialized")
         
+        # Generate cache key for this batch
+        cache_key = generate_cache_key(request.texts)
+        
+        # Check cache first
+        cached_results = results_cache.get(cache_key)
+        if cached_results is not None:
+            return cached_results
+        
+        # Process new request
         results = process_with_stanza(stanza_pool.pipeline, request.texts)
+        
+        # Cache results before returning
+        results_cache.put(cache_key, results)
+        
         return results
     except Exception as e:
+        # Check cache again in case of error
+        # This handles the case where processing succeeded but response failed
+        cached_results = results_cache.get(cache_key)
+        if cached_results is not None:
+            return cached_results
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
