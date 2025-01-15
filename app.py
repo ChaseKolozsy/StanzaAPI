@@ -130,8 +130,8 @@ async def batch_process_texts(request: BatchTextRequest):
             raise HTTPException(status_code=400, detail="Language model not initialized")
         
         # Calculate optimal batch size (adjust these numbers based on your needs)
-        MAX_TEXTS_PER_BATCH = 4000  # Increased from 50 to 4000
-        MAX_CHARS_PER_BATCH = 2000000  # Increased proportionally
+        MAX_TEXTS_PER_BATCH = 1000  # Increased from 50 to 4000
+        MAX_CHARS_PER_BATCH = 1000000  # Increased proportionally
         
         def create_batches(texts):
             current_batch = []
