@@ -193,10 +193,19 @@ async def batch_process_texts(request: BatchTextRequest):
 
 if __name__ == "__main__":
     import uvicorn
+    import argparse
+    
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Stanza API Server')
+    parser.add_argument('--port', type=int, default=5004,
+                      help='Port to run the server on (default: 5004)')
+    
+    args = parser.parse_args()
+    
     uvicorn.run(
         "app:app",
         host="0.0.0.0",
-        port=5004,
+        port=args.port,
         workers=1,  # Using thread pool instead of multiple workers
         loop="auto"
     )
