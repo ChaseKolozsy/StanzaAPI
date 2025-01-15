@@ -38,8 +38,7 @@ class StanzaPool:
         self.batch_size = 4096
         self.current_pipeline = 0
         
-        # Check if GPU is available and system is not macOS
-        self.use_gpu = torch.cuda.is_available() and platform.system() != "Darwin"
+        self.use_gpu = torch.cuda.is_available()
         if self.use_gpu:
             print("🚀 CUDA GPU acceleration enabled!")
         else:
@@ -58,7 +57,7 @@ class StanzaPool:
             stanza.Pipeline(
                 lang=language,
                 processors='tokenize,pos,lemma,depparse',
-                use_gpu=self.use_gpu,  # Use GPU based on availability check
+                use_gpu=True,  # Use GPU based on availability check
                 batch_size=self.batch_size,
                 preload_processors=True
             ) for _ in range(self.num_pipelines)
