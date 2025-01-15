@@ -129,9 +129,10 @@ async def batch_process_texts(request: BatchTextRequest):
         if not stanza_pool.pipelines:
             raise HTTPException(status_code=400, detail="Language model not initialized")
         
-        # Calculate optimal batch size (adjust these numbers based on your needs)
-        MAX_TEXTS_PER_BATCH = 500  # Increased from 50 to 4000
-        MAX_CHARS_PER_BATCH = 1000000  # Increased proportionally
+        # Calculate optimal batch size based on number of texts and pipelines
+        total_texts = len(request.texts)
+        MAX_TEXTS_PER_BATCH = min(500, total_texts // stanza_pool.num_pipelines)
+        MAX_CHARS_PER_BATCH = MAX_TEXTS_PER_BATCH * 200  # Assuming average 200 chars per text
         
         def create_batches(texts):
             current_batch = []
