@@ -1,5 +1,5 @@
-# Use NVIDIA CUDA base image with Ubuntu 23.10
-FROM nvidia/cuda:12.3.1-runtime-ubuntu23.10
+# Use NVIDIA CUDA base image with Ubuntu 22.04 LTS
+FROM nvidia/cuda:12.3.1-runtime-ubuntu22.04
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
 
 # Install Python and system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3.12 \
+    python3.11 \
     python3-pip \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
