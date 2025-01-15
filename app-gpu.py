@@ -31,12 +31,9 @@ class Sentence(BaseModel):
     tokens: List[Token]
 
 class StanzaPool:
-    def __init__(self, num_pipelines: int = WORKER_COUNT):
-        self.num_pipelines = num_pipelines
-        self.pipelines: List[stanza.Pipeline] = []
-        self.locks: List[asyncio.Lock] = []
+    def __init__(self):
+        self.pipeline = None
         self.batch_size = 4096
-        self.current_pipeline = 0
         
         self.use_gpu = torch.cuda.is_available()
         if self.use_gpu:
@@ -44,25 +41,15 @@ class StanzaPool:
         else:
             print("⚙️ Using CPU processing")
 
-    def get_pipeline(self):
-        """Get the next available pipeline in a round-robin fashion"""
-        pipeline = self.pipelines[self.current_pipeline]
-        lock = self.locks[self.current_pipeline]
-        self.current_pipeline = (self.current_pipeline + 1) % self.num_pipelines
-        return pipeline, lock
-
     async def initialize(self, language: str):
-        """Initialize multiple pipelines for the specified language"""
-        self.pipelines = [
-            stanza.Pipeline(
-                lang=language,
-                processors='tokenize,pos,lemma,depparse',
-                use_gpu=True,  # Use GPU based on availability check
-                batch_size=self.batch_size,
-                preload_processors=True
-            ) for _ in range(self.num_pipelines)
-        ]
-        self.locks = [asyncio.Lock() for _ in range(self.num_pipelines)]
+        """Initialize a single pipeline for the specified language"""
+        self.pipeline = stanza.Pipeline(
+            lang=language,
+            processors='tokenize,pos,lemma,depparse',
+            use_gpu=self.use_gpu,
+            batch_size=self.batch_size,
+            preload_processors=True
+        )
 
 stanza_pool = StanzaPool()
 
@@ -108,20 +95,11 @@ async def startup_event():
 @app.post("/process", response_model=List[Sentence])
 async def process_text(request: TextRequest):
     try:
-        if not stanza_pool.pipelines:
+        if not stanza_pool.pipeline:
             raise HTTPException(status_code=400, detail="Language model not initialized")
         
-        pipeline, lock = stanza_pool.get_pipeline()
-        
-        async with lock:
-            result = await asyncio.get_event_loop().run_in_executor(
-                thread_pool,
-                process_with_stanza,
-                pipeline,
-                [request.text]  # Pass as single-item list
-            )
-        
-        return result[0]  # Return first (and only) item
+        result = process_with_stanza(stanza_pool.pipeline, [request.text])
+        return result[0]
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -134,59 +112,10 @@ class BatchTextRequest(BaseModel):
 @app.post("/batch_process", response_model=List[List[Sentence]])
 async def batch_process_texts(request: BatchTextRequest):
     try:
-        if not stanza_pool.pipelines:
+        if not stanza_pool.pipeline:
             raise HTTPException(status_code=400, detail="Language model not initialized")
         
-        # Calculate optimal batch size based on number of texts and pipelines
-        total_texts = len(request.texts)
-        MAX_TEXTS_PER_BATCH = min(500, total_texts // stanza_pool.num_pipelines)
-        MAX_CHARS_PER_BATCH = MAX_TEXTS_PER_BATCH * 200  # Assuming average 200 chars per text
-        
-        def create_batches(texts):
-            current_batch = []
-            current_chars = 0
-            batches = []
-            
-            for text in texts:
-                if (len(current_batch) >= MAX_TEXTS_PER_BATCH or 
-                    current_chars + len(text) > MAX_CHARS_PER_BATCH):
-                    batches.append(current_batch)
-                    current_batch = []
-                    current_chars = 0
-                current_batch.append(text)
-                current_chars += len(text)
-            
-            if current_batch:
-                batches.append(current_batch)
-            return batches
-        
-        # Split texts into reasonable sized batches
-        text_batches = create_batches(request.texts)
-        
-        async def process_batch(batch, pipeline_idx):
-            pipeline = stanza_pool.pipelines[pipeline_idx]
-            lock = stanza_pool.locks[pipeline_idx]
-            async with lock:
-                return await asyncio.get_event_loop().run_in_executor(
-                    thread_pool,
-                    process_with_stanza,
-                    pipeline,
-                    batch
-                )
-        
-        # Process batches concurrently using different pipelines
-        tasks = []
-        for idx, batch in enumerate(text_batches):
-            pipeline_idx = idx % len(stanza_pool.pipelines)
-            tasks.append(process_batch(batch, pipeline_idx))
-        
-        batch_results = await asyncio.gather(*tasks)
-        
-        # Flatten results
-        results = []
-        for batch in batch_results:
-            results.extend(batch)
-            
+        results = process_with_stanza(stanza_pool.pipeline, request.texts)
         return results
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
