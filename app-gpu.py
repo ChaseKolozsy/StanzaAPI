@@ -46,7 +46,7 @@ class StanzaPool:
         self.pipeline = stanza.Pipeline(
             lang=language,
             processors='tokenize,pos,lemma,depparse',
-            use_gpu=self.use_gpu,
+            use_gpu=True,
             batch_size=self.batch_size,
             preload_processors=True
         )
