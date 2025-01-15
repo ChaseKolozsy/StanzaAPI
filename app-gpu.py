@@ -2,18 +2,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import List, Dict, Optional
 import stanza
-from concurrent.futures import ThreadPoolExecutor
-import multiprocessing
-import asyncio
-import platform
-import torch
-
-# Calculate optimal thread count for M3 Max
-CPU_CORES = multiprocessing.cpu_count()
-WORKER_COUNT = max(int((CPU_CORES - 2) / 2), 1)
 
 app = FastAPI(title="Stanza API", version="1.0.0")
-thread_pool = ThreadPoolExecutor(max_workers=WORKER_COUNT)
 
 # Define data models
 class TextRequest(BaseModel):
@@ -34,12 +24,6 @@ class StanzaPool:
     def __init__(self):
         self.pipeline = None
         self.batch_size = 4096
-        
-        self.use_gpu = torch.cuda.is_available()
-        if self.use_gpu:
-            print("🚀 CUDA GPU acceleration enabled!")
-        else:
-            print("⚙️ Using CPU processing")
 
     async def initialize(self, language: str):
         """Initialize a single pipeline for the specified language"""
@@ -126,15 +110,16 @@ if __name__ == "__main__":
     
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Stanza API Server')
-    parser.add_argument('--port', type=int, default=5004,
+    parser.add_argument('--port', type=int, default=5006,
                       help='Port to run the server on (default: 5004)')
     
     args = parser.parse_args()
     
     uvicorn.run(
-        "app:app",
+        app,
         host="0.0.0.0",
         port=args.port,
-        workers=1,  # Using thread pool instead of multiple workers
-        loop="auto"
+        workers=1,
+        loop="auto",
+        reload=False
     )
