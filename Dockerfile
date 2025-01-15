@@ -1,23 +1,17 @@
-# Modify the base image selection
-ARG USE_GPU=1
-FROM python:3.12-slim
-
-# Install CUDA dependencies only if USE_GPU=1
-RUN if [ "$USE_GPU" = "1" ] ; then \
-    apt-get update && apt-get install -y --no-install-recommends \
-    cuda-runtime-12-3 \
-    && rm -rf /var/lib/apt/lists/* ; \
-    fi
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
+# Use NVIDIA CUDA base image
+FROM nvidia/cuda:12.3.1-runtime-ubuntu22.04
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     STANZA_RESOURCES_DIR=/app/stanza_resources
+
+# Install Python and system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.12 \
+    python3-pip \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 # Set the working directory
 WORKDIR /app
