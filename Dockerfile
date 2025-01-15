@@ -1,5 +1,5 @@
-# Use NVIDIA CUDA base image
-FROM nvidia/cuda:12.3.1-runtime-ubuntu22.04
+# Use NVIDIA CUDA base image with Ubuntu 23.10
+FROM nvidia/cuda:12.3.1-runtime-ubuntu23.10
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
