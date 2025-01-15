@@ -58,11 +58,19 @@ class StanzaPool:
 
 stanza_pool = StanzaPool()
 
-def process_with_stanza(pipeline: stanza.Pipeline, text: str) -> List[Sentence]:
-    doc = pipeline(text)
+def process_with_stanza(pipeline: stanza.Pipeline, texts: List[str]) -> List[List[Sentence]]:
+    # Join texts with double newlines for Stanza's batch processing
+    batch_text = "\n\n".join(texts)
+    doc = pipeline(batch_text)
+    
+    # Track which sentences belong to which original text
     result = []
+    current_sentences = []
+    sent_count = 0
+    texts_processed = 0
+    
     for sent in doc.sentences:
-        sentence = Sentence(
+        current_sentences.append(Sentence(
             text=sent.text,
             tokens=[
                 Token(
@@ -72,8 +80,16 @@ def process_with_stanza(pipeline: stanza.Pipeline, text: str) -> List[Sentence]:
                     deprel=word.deprel
                 ) for word in sent.words
             ]
-        )
-        result.append(sentence)
+        ))
+        sent_count += 1
+        
+        # If we've found a blank line or reached the end, start a new document
+        if sent.text.strip() == "" or sent_count == len(doc.sentences):
+            if current_sentences:
+                result.append([s for s in current_sentences if s.text.strip()])
+                current_sentences = []
+                texts_processed += 1
+    
     return result
 
 @app.on_event("startup")
@@ -87,7 +103,6 @@ async def process_text(request: TextRequest):
         if not stanza_pool.pipelines:
             raise HTTPException(status_code=400, detail="Language model not initialized")
         
-        # Get next available pipeline and lock using the pool's method
         pipeline, lock = stanza_pool.get_pipeline()
         
         async with lock:
@@ -95,10 +110,10 @@ async def process_text(request: TextRequest):
                 thread_pool,
                 process_with_stanza,
                 pipeline,
-                request.text
+                [request.text]  # Pass as single-item list
             )
         
-        return result
+        return result[0]  # Return first (and only) item
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -114,32 +129,54 @@ async def batch_process_texts(request: BatchTextRequest):
         if not stanza_pool.pipelines:
             raise HTTPException(status_code=400, detail="Language model not initialized")
         
-        # Split texts into chunks based on number of pipelines
-        num_pipelines = len(stanza_pool.pipelines)
-        chunk_size = (len(request.texts) + num_pipelines - 1) // num_pipelines
-        text_chunks = [request.texts[i:i + chunk_size] 
-                      for i in range(0, len(request.texts), chunk_size)]
+        # Calculate optimal batch size (adjust these numbers based on your needs)
+        MAX_TEXTS_PER_BATCH = 50
+        MAX_CHARS_PER_BATCH = 100000
         
-        async def process_chunk(chunk, pipeline_idx):
+        def create_batches(texts):
+            current_batch = []
+            current_chars = 0
+            batches = []
+            
+            for text in texts:
+                if (len(current_batch) >= MAX_TEXTS_PER_BATCH or 
+                    current_chars + len(text) > MAX_CHARS_PER_BATCH):
+                    batches.append(current_batch)
+                    current_batch = []
+                    current_chars = 0
+                current_batch.append(text)
+                current_chars += len(text)
+            
+            if current_batch:
+                batches.append(current_batch)
+            return batches
+        
+        # Split texts into reasonable sized batches
+        text_batches = create_batches(request.texts)
+        
+        async def process_batch(batch, pipeline_idx):
             pipeline = stanza_pool.pipelines[pipeline_idx]
             lock = stanza_pool.locks[pipeline_idx]
             async with lock:
                 return await asyncio.get_event_loop().run_in_executor(
                     thread_pool,
-                    lambda: [process_with_stanza(pipeline, text) for text in chunk]
+                    process_with_stanza,
+                    pipeline,
+                    batch
                 )
         
-        # Process chunks concurrently using different pipelines
-        tasks = [
-            process_chunk(chunk, idx) 
-            for idx, chunk in enumerate(text_chunks)
-        ]
-        chunk_results = await asyncio.gather(*tasks)
+        # Process batches concurrently using different pipelines
+        tasks = []
+        for idx, batch in enumerate(text_batches):
+            pipeline_idx = idx % len(stanza_pool.pipelines)
+            tasks.append(process_batch(batch, pipeline_idx))
         
-        # Flatten results back into a single list
+        batch_results = await asyncio.gather(*tasks)
+        
+        # Flatten results
         results = []
-        for chunk in chunk_results:
-            results.extend(chunk)
+        for batch in batch_results:
+            results.extend(batch)
             
         return results
     except Exception as e:
