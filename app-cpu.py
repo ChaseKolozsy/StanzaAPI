@@ -160,7 +160,7 @@ if __name__ == "__main__":
     
     # Set up argument parser
     parser = argparse.ArgumentParser(description='Stanza API Server')
-    parser.add_argument('--port', type=int, default=5006,
+    parser.add_argument('--port', type=int, default=5004,
                       help='Port to run the server on (default: 5004)')
     
     args = parser.parse_args()
