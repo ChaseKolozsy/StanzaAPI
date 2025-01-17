@@ -136,8 +136,8 @@ async def batch_process_texts(request: BatchTextRequest):
         
         # Check cache first
         cached_results = results_cache.get(cache_key)
-        if cached_results is not None:
-            return cached_results
+        #if cached_results is not None:
+        #    return cached_results
         
         # Process new request
         results = process_with_stanza(stanza_pool.pipeline, request.texts)
