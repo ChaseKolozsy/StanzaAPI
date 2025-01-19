@@ -8,6 +8,10 @@ from collections import OrderedDict
 
 app = FastAPI(title="Stanza API", version="1.0.0")
 
+device = "gpu"
+cuda = 1
+stanza_pool = None
+
 # LRU Cache for results
 class LRUCache:
     def __init__(self, capacity: int = 1000):
@@ -53,21 +57,24 @@ class Sentence(BaseModel):
     tokens: List[Token]
 
 class StanzaPool:
-    def __init__(self):
+    def __init__(self, device, cuda):
         self.pipeline = None
         self.batch_size = 4096
+        self.device = device
+        self.cuda = cuda
+        self.use_gpu = 'gpu' == self.device
 
     async def initialize(self, language: str):
         """Initialize a single pipeline for the specified language"""
         self.pipeline = stanza.Pipeline(
             lang=language,
             processors='tokenize,pos,lemma,depparse',
-            use_gpu=True,
+            use_gpu=self.use_gpu,
+            device=self.device if not self.use_gpu else f'cuda:{self.cuda}',
             batch_size=self.batch_size,
             preload_processors=True
         )
 
-stanza_pool = StanzaPool()
 
 def process_with_stanza(pipeline: stanza.Pipeline, texts: List[str]) -> List[List[Sentence]]:
     # Join texts with double newlines for Stanza's batch processing
@@ -162,8 +169,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Stanza API Server')
     parser.add_argument('--port', type=int, default=5006,
                       help='Port to run the server on (default: 5004)')
+    parser.add_argument('--device', type=str, default="gpu", help="cpu or gpu")
+    parser.add_argument('--cuda', type=int, default="1", help="choose which gpu you want, 0, 1, etc.")
     
     args = parser.parse_args()
+    cuda = args.cuda
+    device = args.device
+    print(f"args: {args}")
+    stanza_pool = StanzaPool(device=device, cuda=cuda)
+    print("device: {stanza_pool.device}, cuda: {stanza_pool.cuda}")
     
     uvicorn.run(
         app,
