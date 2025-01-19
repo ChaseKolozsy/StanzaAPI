@@ -170,7 +170,7 @@ if __name__ == "__main__":
     parser.add_argument('--port', type=int, default=5006,
                       help='Port to run the server on (default: 5004)')
     parser.add_argument('--device', type=str, default="gpu", help="cpu or gpu")
-    parser.add_argument('--cuda', type=int, default="1", help="choose which gpu you want, 0, 1, etc.")
+    parser.add_argument('--cuda', type=int, default="0", help="choose which gpu you want, 0, 1, etc.")
     
     args = parser.parse_args()
     cuda = args.cuda
