@@ -5,6 +5,7 @@ import stanza
 import hashlib
 import time
 from collections import OrderedDict
+import os
 
 app = FastAPI(title="Stanza API", version="1.0.0")
 
@@ -113,7 +114,8 @@ def process_with_stanza(pipeline: stanza.Pipeline, texts: List[str]) -> List[Lis
 @app.on_event("startup")
 async def startup_event():
     # Initialize multiple pipelines for English only
-    await stanza_pool.initialize('hu')  # or whatever language you want
+    if stanza_pool is not None:
+        await stanza_pool.initialize('hu')  # or whatever language you want
 
 @app.post("/process", response_model=List[Sentence])
 async def process_text(request: TextRequest):
@@ -161,6 +163,14 @@ async def batch_process_texts(request: BatchTextRequest):
             return cached_results
         raise HTTPException(status_code=500, detail=str(e))
 
+# Initialize stanza_pool based on environment
+if os.path.exists('/.dockerenv'):
+    # Running in Docker container
+    stanza_pool = StanzaPool(device="cpu", cuda=None)
+else:
+    # Not in Docker, will be initialized in main
+    stanza_pool = None
+
 if __name__ == "__main__":
     import uvicorn
     import argparse
@@ -176,7 +186,8 @@ if __name__ == "__main__":
     cuda = args.cuda
     device = args.device
     print(f"args: {args}")
-    stanza_pool = StanzaPool(device=device, cuda=cuda)
+    if stanza_pool is None:  # Only initialize if not already initialized
+        stanza_pool = StanzaPool(device=device, cuda=cuda)
     print("device: {stanza_pool.device}, cuda: {stanza_pool.cuda}")
     
     uvicorn.run(
